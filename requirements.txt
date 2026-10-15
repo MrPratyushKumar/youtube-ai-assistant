@@ -1,0 +1,12 @@
+streamlit
+youtube-transcript-api
+langchain
+langchain-community
+langchain-text-splitters
+langchain-google-genai
+faiss-cpu
+google-generativeai
+requests
+python-dotenv
+fpdf2
+markdown

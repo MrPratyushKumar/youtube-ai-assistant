@@ -3,10 +3,23 @@
 Ask a YouTube video questions, and turn any video into downloadable, timestamped study notes.
 Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embeddings, FAISS and Streamlit.
 
-> Forked and extended from the original *YouTube Video Chatbot* by Harsha
-> ([live demo](https://youtube-ai-assistant-1926.streamlit.app/)).
-> **What I added:** timestamped chunks, the Auto Notes pipeline, clickable citations,
-> chat history, caching, multi-language transcripts and project structure.
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red) ![LangChain](https://img.shields.io/badge/RAG-LangChain-green) ![Gemini](https://img.shields.io/badge/LLM-Gemini--2.5--Flash-blueviolet) ![FAISS](https://img.shields.io/badge/Vector__DB-FAISS-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+
+> Extended from the original *YouTube Video Chatbot* by
+> [Harsha](https://youtube-ai-assistant-1926.streamlit.app/), which only answered questions.
+> **What I added:** timestamped chunks and citations, the Auto Notes pipeline, PDF export,
+> quota-safe batched embeddings, vector caching, chat history, multi-language transcripts,
+> offline tests and the module structure.
+
+---
+
+## 🎯 30-second tour
+
+1. Paste a 5–15 minute talk → **🚀 Process video**.
+2. **💬 Chat** → ask *"What are the three main points?"* → the answer ends with a `[mm:ss]` link that jumps into the video.
+3. **📝 Auto notes** → **Generate notes** → TL;DR, topic sections, definitions table, action items and a self-test quiz.
+4. **📄 Download notes (PDF)** → open it; every timestamp is a clickable deep link.
+5. Re-process the same video → instant, because the transcript and vectors are cached.
 
 ---
 
@@ -27,6 +40,7 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 | ⬇️ Download notes as Markdown **or** PDF — [sample output](docs/sample_notes.pdf) | ⭐ added |
 | 🧾 Full transcript browser by timestamp | ⭐ added |
 | ⚡ `st.cache_data` so re-processing a video costs zero API calls | ⭐ added |
+| 🚦 Batched embeddings + throttled chat calls so free-tier quotas don't break a run | ⭐ added |
 
 ---
 
@@ -55,11 +69,27 @@ The same `**[mm:ss]**` markers survive into the PDF, where `fpdf2` renders them 
 ├── rag.py           # Gemini LLM factory + grounded answer prompt
 ├── notes.py         # map/reduce note generation, Markdown templates, deep links
 ├── pdf_export.py    # Markdown -> PDF (headings, tables, links, page numbers, font fallback)
+├── ratelimit.py     # shared throttle + 429 retry that honours Google's retryDelay
 ├── smoke_test.py    # offline checks (no API key needed): python smoke_test.py
+├── docs/            # sample PDF output
 ├── requirements.txt
 ├── .env.example     # copy to .env and add your key
 └── .streamlit/secrets.toml   # cloud only, never committed
 ```
+
+---
+
+## 🧠 Design decisions
+
+| Choice | Why |
+|---|---|
+| Timestamps live **inside** the chunk text | Retrieval returns the chunk verbatim, so citations come back for free — no parallel metadata store to keep in sync |
+| Chunk on caption-snippet boundaries, not raw characters | Cuts never split mid-sentence, so an embedding represents a complete thought |
+| 3-snippet overlap between chunks | Without it, an idea straddling a boundary becomes unretrievable |
+| Batched `embed_content` (90 texts/request) | LangChain's wrapper issues one request per document and dies at the free tier's 100 requests/min on any long video |
+| Map/reduce for notes instead of one giant prompt | Transcripts exceed the practical context window; batching keeps each call small and cost linear |
+| Vectors cached per video | Re-indexing is a pure FAISS rebuild — zero API spend |
+| Fixed "not in the transcript" reply | A RAG demo is only trustworthy when it refuses instead of inventing |
 
 ---
 
@@ -109,10 +139,13 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini 2.5 Flash · 
 
 ## 📄 License
 
-MIT (original project's terms). API usage costs are yours; the free Gemini tier is enough for demos.
+MIT for this work — see [LICENSE](LICENSE). The base chatbot it extends is credited above; check
+its own terms before reusing it commercially. API usage costs are yours; the free Gemini tier is
+enough for demos.
 
 ## 🧪 Evidence
 
 The AI calls cost API credits, so the deterministic parts of the pipeline are covered by
-[`smoke_test.py`](smoke_test.py) — URL parsing, chunk/label round-trips, note batching and PDF
-rendering. Run it with `python smoke_test.py`; it needs no key and makes no network calls.
+[`smoke_test.py`](smoke_test.py) — URL parsing, chunk/label round-trips, note batching, 429
+retry/backoff behaviour and PDF rendering. Run it with `python smoke_test.py`; it needs no key
+and makes no network calls.

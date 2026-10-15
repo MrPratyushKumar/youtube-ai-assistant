@@ -152,8 +152,9 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini 2.5 Flash · 
 | `YouTube is blocking requests from your IP` | Expected on cloud hosts — use **Paste / upload transcript**, or set `TRANSCRIPT_PROXY_HTTPS_URL` |
 | `Could not get API key` | `.env` missing `GEMINI_API_KEY=...`, or secrets not set on Streamlit Cloud |
 | Rate limit (429) | Lower "How many transcript chunks to read" in the Notes tab |
-| Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 6 |
+| Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 12 |
 | `faiss-cpu` will not install | Use Python 3.11–3.13; pre-built wheels lag behind brand-new Python releases |
+| `FAISS.from_embeddings() missing ... 'text_embeddings'` | A LangChain version drifted out from under the code — `requirements.txt` is pinned to the versions this repo is tested against, so reinstall with `pip install -r requirements.txt --force-reinstall` |
 | PDF text looks plain / some characters missing | `pdf_export.py` auto-picks Arial → Calibri → DejaVu. Force one with `PDF_FONT_PATH=C:\Windows\Fonts\arial.ttf` (or `PDF_FONT_DIR`) |
 
 ## 📄 License

@@ -169,10 +169,22 @@ def test_pdf_export():
     print(f"pdf export ok ({len(data) / 1024:.0f} KB, font={pdf_export._find_font('') or 'core latin-1'})")
 
 
+def test_vector_store():
+    """FAISS must accept pre-computed vectors, otherwise re-runs pay for embeddings twice."""
+    chunks = ["[0-2] 0:00 - 0:20 rest apis use http", "[3-5] 0:21 - 0:40 graphql field selection"]
+    vectors = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+    store = pipeline.build_vector_store(chunks, vectors, "smoke-test-key-not-used")
+    assert len(store.docstore._dict) == 2
+    hit = store.similarity_search_by_vector([0.9, 0.1, 0.0], k=1)[0].page_content
+    assert hit == chunks[0], hit
+    print("vector store ok (2 chunks, cached vectors reused)")
+
+
 test_video_ids()
 test_chunking()
 test_upload_parsing()
 test_rate_limit()
+test_vector_store()
 test_notes_flow()
 test_pdf_export()
 print("\nALL CHECKS PASSED")

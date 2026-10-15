@@ -308,7 +308,8 @@ def build_vector_store(chunks: list[str], vectors: list[list[float]], api_key: s
     from langchain_community.vectorstores import FAISS
 
     return FAISS.from_embeddings(
-        texts=chunks, embedding=GeminiBatchEmbeddings(api_key), embeddings=vectors
+        text_embeddings=list(zip(chunks, vectors)),
+        embedding=GeminiBatchEmbeddings(api_key),
     )
 
 

@@ -3,7 +3,7 @@
 Ask a YouTube video questions, and turn any video into downloadable, timestamped study notes.
 Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embeddings, FAISS and Streamlit.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red) ![LangChain](https://img.shields.io/badge/RAG-LangChain-green) ![Gemini](https://img.shields.io/badge/LLM-Gemini--2.5--Flash-blueviolet) ![FAISS](https://img.shields.io/badge/Vector__DB-FAISS-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red) ![LangChain](https://img.shields.io/badge/RAG-LangChain-green) ![Gemini](https://img.shields.io/badge/LLM-Gemini--Flash-blueviolet) ![FAISS](https://img.shields.io/badge/Vector__DB-FAISS-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 **🔴 Live demo:** <https://youtube-ai-assistant-dxevhsgtntnggmg4aibzee.streamlit.app/>
 (Cloud IPs are blocked by YouTube, so on the deployed app use **📄 Paste / upload transcript** — the
@@ -36,7 +36,7 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 | Timestamp-aware chunking (overlapping windows of caption snippets) | ✅ |
 | Gemini embeddings stored in a FAISS vector index | ✅ |
 | Similarity search with `k` relevant chunks | ✅ |
-| Grounded Q&A with Gemini 2.5 Flash | ✅ |
+| Grounded Q&A with Gemini Flash | ✅ |
 | 💬 Chat history kept across reruns, clear button | ⭐ added |
 | 🔗 Clickable `[mm:ss]` citations that jump to that moment in the video | ⭐ added |
 | 📝 **Auto Notes**: map/reduce summarisation → TL;DR, takeaways, topics, definitions table, action items, quotes, self-test quiz | ⭐ added |
@@ -57,7 +57,7 @@ YouTube URL
          └─> Transcript snippets (start, text)
                └─> Overlapping chunk windows  ──►  "[3-17] 04:12 - 09:30  <text>"
                      ├─► Gemini embedding-001 ──► FAISS index ──► similarity search
-                     │                                             └─► Gemini 2.5 Flash ─► answer + citation
+                     │                                             └─► Gemini Flash ─► answer + citation
                      └─► map (per batch: timestamped bullets) ─► reduce ─► Markdown notes + quiz
 ```
 
@@ -94,6 +94,7 @@ The same `**[mm:ss]**` markers survive into the PDF, where `fpdf2` renders them 
 | Batched `embed_content` (90 texts/request) | LangChain's wrapper issues one request per document and dies at the free tier's 100 requests/min on any long video |
 | Map/reduce for notes instead of one giant prompt | Transcripts exceed the practical context window; batching keeps each call small and cost linear |
 | Vectors cached per video | Re-indexing is a pure FAISS rebuild — zero API spend |
+| Chat model = `gemini-flash-latest`, not a dated snapshot | Google retires pinned versions for new API keys — a `gemini-2.5-flash` deployment now 404s on every question. Override with `GEMINI_CHAT_MODEL` |
 | Fixed "not in the transcript" reply | A RAG demo is only trustworthy when it refuses instead of inventing |
 
 ---
@@ -142,7 +143,7 @@ Without either, the deployed app still runs — it just cannot reach YouTube its
 
 ## 🛠️ Tech stack
 
-Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini 2.5 Flash · FAISS · youtube-transcript-api
+Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini Flash · FAISS · youtube-transcript-api
 
 ## 🩺 Troubleshooting
 

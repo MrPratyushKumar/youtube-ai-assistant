@@ -169,6 +169,22 @@ def test_pdf_export():
     print(f"pdf export ok ({len(data) / 1024:.0f} KB, font={pdf_export._find_font('') or 'core latin-1'})")
 
 
+def test_llm_response_shapes():
+    """Current Google chat wrappers return content blocks, not a plain string."""
+    import rag
+
+    assert rag.response_text("plain") == "plain"
+    blocks = [
+        {"type": "text", "text": "part one "},
+        {"type": "thinking", "text": "ignored"},
+        {"type": "text", "text": "part two"},
+    ]
+    assert rag.response_text(blocks) == "part one part two"
+    assert rag.response_text(None) == ""
+    assert rag.DEFAULT_MODEL and "2.5" not in rag.DEFAULT_MODEL  # retired snapshots 404
+    print(f"chat response parsing ok (model={rag.DEFAULT_MODEL})")
+
+
 def test_vector_store():
     """FAISS must accept pre-computed vectors, otherwise re-runs pay for embeddings twice."""
     chunks = ["[0-2] 0:00 - 0:20 rest apis use http", "[3-5] 0:21 - 0:40 graphql field selection"]
@@ -184,6 +200,7 @@ test_video_ids()
 test_chunking()
 test_upload_parsing()
 test_rate_limit()
+test_llm_response_shapes()
 test_vector_store()
 test_notes_flow()
 test_pdf_export()

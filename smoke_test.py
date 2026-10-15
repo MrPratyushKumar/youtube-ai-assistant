@@ -125,6 +125,25 @@ def test_upload_parsing():
     vtt = "WEBVTT\nKind: captions\nLanguage: en\n\n00:00:04.100 --> 00:00:07.000\nA caption\n"
     assert pipeline.parse_uploaded_transcript(vtt)[0].start == 4
 
+    rolling = (
+        "WEBVTT\n\n00:00:05.000 --> 00:00:08.000\n"
+        "Well, think of an API like a waiter\n\n"
+        "00:00:08.000 --> 00:00:11.000\n"
+        "think of an API like a waiter at a restaurant\n\n"
+        "00:00:11.000 --> 00:00:14.000\n"
+        "at a restaurant. You place your order.\n"
+    )
+    rolled = pipeline.parse_uploaded_transcript(rolling)
+    assert " ".join(c.text for c in rolled) == (
+        "Well, think of an API like a waiter at a restaurant. You place your order."
+    ), [c.text for c in rolled]
+    assert [c.start for c in rolled] == [5, 8, 11], rolled
+
+    panel = "0:00\nhey everyone\n0:07\nwelcome back\n0:12\ntoday we talk about APIs\n"
+    stamps = pipeline.parse_uploaded_transcript(panel)
+    assert [s.start for s in stamps] == [0, 7, 12], stamps
+    assert stamps[-1].text == "today we talk about APIs", stamps
+
     plain = pipeline.parse_uploaded_transcript("First sentence here. Second one runs longer. " * 20)
     assert len(plain) > 1 and all(s.start is None for s in plain)
     texts = [

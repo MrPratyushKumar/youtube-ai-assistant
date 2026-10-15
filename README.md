@@ -5,6 +5,10 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue) ![Streamlit](https://img.shields.io/badge/UI-Streamlit-red) ![LangChain](https://img.shields.io/badge/RAG-LangChain-green) ![Gemini](https://img.shields.io/badge/LLM-Gemini--2.5--Flash-blueviolet) ![FAISS](https://img.shields.io/badge/Vector__DB-FAISS-orange) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
+**🔴 Live demo:** <https://youtube-ai-assistant-dxevhsgtntnggmg4aibzee.streamlit.app/>
+(Cloud IPs are blocked by YouTube, so on the deployed app use **📄 Paste / upload transcript** — the
+*YouTube blocks cloud IPs* note under **☁️ Deploy** explains why and what to do.)
+
 > Extended from the original *YouTube Video Chatbot* by
 > [Harsha](https://youtube-ai-assistant-1926.streamlit.app/), which only answered questions.
 > **What I added:** timestamped chunks and citations, the Auto Notes pipeline, PDF export,
@@ -131,7 +135,7 @@ your IP"* the moment you press Process. Two supported ways around it:
 
 | Option | Cost | What you do |
 |---|---|---|
-| **Paste / upload transcript** mode | free | Download captions (`yt-dlp --write-auto-subs --skip-download <url>` gives you a `.srt`) or copy them from YouTube's *Show transcript* panel, then upload. `.srt`/`.vtt` keep timestamps, so citations and PDF deep links still work. |
+| **Paste / upload transcript** mode | free | Download captions with `yt-dlp --write-auto-subs --sub-langs en --skip-download <url>` (it writes an `.en.vtt` file), or copy the text straight out of YouTube's *Show transcript* panel and paste it in. `.srt`/`.vtt` keep timestamps, so citations and PDF deep links still work — including YouTube's rolling auto-captions, which the parser stitches back into one clean pass. |
 | **Residential proxy** | paid trial | Add `TRANSCRIPT_PROXY_HTTPS_URL` to the app secrets; `pipeline._transcript_api()` routes requests through it and URL mode works again. |
 
 Without either, the deployed app still runs — it just cannot reach YouTube itself.

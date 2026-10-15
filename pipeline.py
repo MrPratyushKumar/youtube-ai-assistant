@@ -114,11 +114,49 @@ def fetch_snippets(video_id: str, languages: list[str] | None = None) -> list[Sn
 def _clean_snippets(starts, texts) -> list[Snippet]:
     snippets: list[Snippet] = []
     for start, raw in zip(starts, texts):
-        text = re.sub(r"\s+", " ", _NOISE.sub(" ", raw)).strip()
+        text = re.sub(r"<[^>]+>", " ", raw)  # VTT timing tags and <c> styling runs
+        text = re.sub(r"\s+", " ", _NOISE.sub(" ", text)).strip()
         if text:
             snippets.append(Snippet(start=None if start is None else int(start), text=text))
     snippets.sort(key=lambda s: s.start if s.start is not None else 0)
     return snippets
+
+
+def _dedupe_rolling(snippets: list[Snippet]) -> list[Snippet]:
+    """Collapse YouTube's rolling captions, where each cue repeats the previous line.
+
+    Auto-generated VTT emits every cue as a sliding window: the tail of the last
+    caption plus a little new text. Keeping only the words past the overlap stops
+    the transcript being written out two or three times over.
+    """
+    kept: list[Snippet] = []
+    keys: list[str] = []
+    for snippet in snippets:
+        words = snippet.text.split()
+        word_keys = [_token_key(word) for word in words]
+        size = _overlap_size(keys, word_keys) if kept else 0
+        remainder = words[size:]
+        if size:
+            tail = words[:size]
+            previous_words = kept[-1].text.split()
+            merged = " ".join(previous_words[:-size] + tail)
+            kept[-1] = Snippet(kept[-1].start, merged)
+            keys = [_token_key(word) for word in merged.split()]
+        if remainder:
+            kept.append(Snippet(start=snippet.start, text=" ".join(remainder)))
+            keys = [_token_key(word) for word in remainder]
+    return kept
+
+
+def _token_key(word: str) -> str:
+    return re.sub(r"[^0-9a-z]", "", word.lower())
+
+
+def _overlap_size(previous: list[str], current: list[str]) -> int:
+    for size in range(min(len(previous), len(current)), 0, -1):
+        if previous[-size:] == current[:size]:
+            return size
+    return 0
 
 
 _CUE = re.compile(
@@ -136,10 +174,17 @@ def _cue_to_seconds(value: str) -> int:
 
 
 def parse_uploaded_transcript(raw: str) -> list[Snippet]:
-    """Accept YouTube's .srt/.vtt export (keeps timestamps) or plain text (no timestamps)."""
-    if "-->" not in raw:
-        return _plain_snippets(raw)
+    """Accept a .srt/.vtt export, the 'Show transcript' panel text, or plain text."""
+    if "-->" in raw:
+        return _parse_cues(raw)
+    lines = raw.splitlines()
+    marks = [line for line in lines if _PANEL_TIME.match(line.strip())]
+    if len(marks) >= 2 and len(marks) * 4 >= sum(1 for line in lines if line.strip()):
+        return _parse_panel(lines)
+    return _plain_snippets(raw)
 
+
+def _parse_cues(raw: str) -> list[Snippet]:
     starts: list[int | None] = []
     texts: list[str] = []
     pending_start: int | None = None
@@ -157,7 +202,7 @@ def parse_uploaded_transcript(raw: str) -> list[Snippet]:
                 texts.append(" ".join(buffer))
             buffer, pending_start = [], None
             continue
-        if stripped.isdigit() or stripped.startswith("WEBVTT") or stripped.startswith("Kind:") or stripped.startswith("Language:"):
+        if stripped.isdigit() or stripped.startswith(("WEBVTT", "Kind:", "Language:")):
             continue
         buffer.append(stripped)
 
@@ -165,7 +210,33 @@ def parse_uploaded_transcript(raw: str) -> list[Snippet]:
         starts.append(pending_start)
         texts.append(" ".join(buffer))
 
-    return _clean_snippets(iter(starts), iter(texts))
+    return _dedupe_rolling(_clean_snippets(iter(starts), iter(texts)))
+
+
+_PANEL_TIME = re.compile(r"^(?:\d{1,2}:)?\d{1,2}:\d{2}$")
+
+
+def _parse_panel(lines: list[str]) -> list[Snippet]:
+    """Parse the 'Show transcript' panel, which alternates a bare timestamp and its lines."""
+    snippets: list[Snippet] = []
+    pending_start: int | None = None
+    buffer: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _PANEL_TIME.match(stripped):
+            if buffer and pending_start is not None:
+                snippets.append(Snippet(start=pending_start, text=" ".join(buffer)))
+            buffer = []
+            pending_start = _cue_to_seconds(stripped)
+            continue
+        if pending_start is None:
+            continue
+        buffer.append(stripped)
+    if buffer and pending_start is not None:
+        snippets.append(Snippet(start=pending_start, text=" ".join(buffer)))
+    return _clean_snippets((s.start for s in snippets), (s.text for s in snippets))
 
 
 def _plain_snippets(raw: str, target_chars: int = 220) -> list[Snippet]:

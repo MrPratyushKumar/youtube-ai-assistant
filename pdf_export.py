@@ -84,6 +84,8 @@ class _NotesPDF(FPDF):
         self.cell(0, 6, f"Page {self.page_no()} of {{nb}}", align="R")
 
     def open_video_link(self) -> None:
+        if not self._video_url:  # uploaded transcripts have no source video
+            return
         self.set_font("Notes", "", 9)
         self.set_text_color(*ACCENT)
         self.multi_cell(

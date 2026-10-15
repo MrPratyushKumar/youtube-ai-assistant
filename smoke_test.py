@@ -113,6 +113,28 @@ A: So an idea split across a boundary still appears intact.
 """
 
 
+def test_upload_parsing():
+    srt = (
+        "1\n00:00:12,340 --> 00:00:15,000\nHello there\n\n"
+        "2\n00:01:02,000 --> 00:01:05,000\nSecond cue\n"
+    )
+    cues = pipeline.parse_uploaded_transcript(srt)
+    assert [c.start for c in cues] == [12, 62], cues
+    assert [c.text for c in cues] == ["Hello there", "Second cue"], cues
+
+    vtt = "WEBVTT\nKind: captions\nLanguage: en\n\n00:00:04.100 --> 00:00:07.000\nA caption\n"
+    assert pipeline.parse_uploaded_transcript(vtt)[0].start == 4
+
+    plain = pipeline.parse_uploaded_transcript("First sentence here. Second one runs longer. " * 20)
+    assert len(plain) > 1 and all(s.start is None for s in plain)
+    texts = [
+        pipeline.chunk_to_text(batch, i)
+        for i, batch in enumerate(pipeline.chunk_snippets(plain, chunk_chars=300))
+    ]
+    assert all(pipeline.chunk_label(text)[2] == "" for text in texts)  # no fake timestamps
+    print(f"upload parsing ok ({len(cues)} srt cues, {len(plain)} plain snippets, {len(texts)} chunks)")
+
+
 def test_pdf_export():
     import pdf_export
 
@@ -123,11 +145,14 @@ def test_pdf_export():
     assert data[:5] == b"%PDF-", data[:8]
     assert len(data) > 2000
     assert not pdf_export._prepare(linked).startswith("# ")  # title moves to the page header
+    assert notes.add_timestamp_links(NOTES_SAMPLE, "") == NOTES_SAMPLE  # upload mode has no video
+    assert pdf_export.notes_to_pdf(linked, "Demo Video", "")[:5] == b"%PDF-"
     print(f"pdf export ok ({len(data) / 1024:.0f} KB, font={pdf_export._find_font('') or 'core latin-1'})")
 
 
 test_video_ids()
 test_chunking()
+test_upload_parsing()
 test_rate_limit()
 test_notes_flow()
 test_pdf_export()

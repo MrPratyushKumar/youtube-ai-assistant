@@ -15,7 +15,7 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 
 ## 🎯 30-second tour
 
-1. Paste a 5–15 minute talk → **🚀 Process video**.
+1. Paste a 5–15 minute talk → **🚀 Process video**. (On the deployed app, YouTube may block the server's IP — switch to **📄 Paste / upload transcript** and feed it a `.srt` instead.)
 2. **💬 Chat** → ask *"What are the three main points?"* → the answer ends with a `[mm:ss]` link that jumps into the video.
 3. **📝 Auto notes** → **Generate notes** → TL;DR, topic sections, definitions table, action items and a self-test quiz.
 4. **📄 Download notes (PDF)** → open it; every timestamp is a clickable deep link.
@@ -39,6 +39,7 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 | 📄 **PDF export** of those notes — styled headings, definition table, page numbers and clickable timestamp links | ⭐ added |
 | ⬇️ Download notes as Markdown **or** PDF — [sample output](docs/sample_notes.pdf) | ⭐ added |
 | 🧾 Full transcript browser by timestamp | ⭐ added |
+| 📤 Transcript upload (`.srt` / `.vtt` / `.txt`) for when YouTube blocks the server's IP | ⭐ added |
 | ⚡ `st.cache_data` so re-processing a video costs zero API calls | ⭐ added |
 | 🚦 Batched embeddings + throttled chat calls so free-tier quotas don't break a run | ⭐ added |
 
@@ -122,6 +123,19 @@ python smoke_test.py
    ```
 4. Deploy. The app reads the key from `st.secrets` in the cloud and from `.env` locally.
 
+### ⚠️ YouTube blocks cloud IPs
+
+`youtube-transcript-api` works fine on your laptop, but YouTube refuses requests from
+datacenter ranges — so a Streamlit Cloud deployment gets *"YouTube is blocking requests from
+your IP"* the moment you press Process. Two supported ways around it:
+
+| Option | Cost | What you do |
+|---|---|---|
+| **Paste / upload transcript** mode | free | Download captions (`yt-dlp --write-auto-subs --skip-download <url>` gives you a `.srt`) or copy them from YouTube's *Show transcript* panel, then upload. `.srt`/`.vtt` keep timestamps, so citations and PDF deep links still work. |
+| **Residential proxy** | paid trial | Add `TRANSCRIPT_PROXY_HTTPS_URL` to the app secrets; `pipeline._transcript_api()` routes requests through it and URL mode works again. |
+
+Without either, the deployed app still runs — it just cannot reach YouTube itself.
+
 ## 🛠️ Tech stack
 
 Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini 2.5 Flash · FAISS · youtube-transcript-api
@@ -131,6 +145,7 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini 2.5 Flash · 
 | Problem | Fix |
 |---|---|
 | `No transcripts were provided` / `TranscriptsDisabled` | Video has no captions — pick another, or change the language selector |
+| `YouTube is blocking requests from your IP` | Expected on cloud hosts — use **Paste / upload transcript**, or set `TRANSCRIPT_PROXY_HTTPS_URL` |
 | `Could not get API key` | `.env` missing `GEMINI_API_KEY=...`, or secrets not set on Streamlit Cloud |
 | Rate limit (429) | Lower "How many transcript chunks to read" in the Notes tab |
 | Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 6 |

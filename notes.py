@@ -117,6 +117,8 @@ def line_first(chunk_text: str) -> str:
 
 def add_timestamp_links(markdown: str, video_id: str) -> str:
     """Turn `**[mm:ss]**` markers into clickable YouTube deep links."""
+    if not video_id:  # uploaded transcripts have no video to link back to
+        return markdown
     pattern = re.compile(r"\*\*\[(\d{1,2}(?::\d{2}){1,2})\]\*\*")
 
     def replace(match: re.Match) -> str:

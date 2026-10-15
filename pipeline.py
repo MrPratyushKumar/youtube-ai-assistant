@@ -22,8 +22,30 @@ _TIMESTAMP = re.compile(r"^\[(\d+)-(\d+)\]\s*(\S+)\s*-\s*(\S+)")
 
 @dataclass
 class Snippet:
-    start: int
+    start: int | None
     text: str
+
+
+class TranscriptBlockedError(RuntimeError):
+    """Raised when YouTube refuses this IP (normal for cloud hosts)."""
+
+
+def _transcript_api():
+    """Build the client, routing through a proxy when one is configured.
+
+    YouTube blocks datacenter IPs, so a deployed app needs `TRANSCRIPT_PROXY_HTTPS_URL`
+    (a residential proxy from Webshare/Bright Data etc.) to fetch transcripts at all.
+    """
+    https_url = os.environ.get("TRANSCRIPT_PROXY_HTTPS_URL")
+    http_url = os.environ.get("TRANSCRIPT_PROXY_HTTP_URL", https_url)
+    if not https_url:
+        return YouTubeTranscriptApi()
+
+    from youtube_transcript_api.proxies import GenericProxyConfig
+
+    return YouTubeTranscriptApi(
+        proxy_config=GenericProxyConfig(http_url=http_url, https_url=https_url)
+    )
 
 
 def extract_video_id(url: str) -> str | None:
@@ -44,7 +66,9 @@ def extract_video_id(url: str) -> str | None:
     return parse_qs(parsed.query).get("v", [None])[0]
 
 
-def format_time(seconds: int) -> str:
+def format_time(seconds: int | None) -> str:
+    if seconds is None:
+        return ""
     seconds = max(0, int(seconds))
     hours, remainder = divmod(seconds, 3600)
     minutes, secs = divmod(remainder, 60)
@@ -74,14 +98,92 @@ def fetch_video_title(video_id: str) -> str:
 
 def fetch_snippets(video_id: str, languages: list[str] | None = None) -> list[Snippet]:
     """Return cleaned transcript snippets ordered by start time."""
-    transcript = YouTubeTranscriptApi().fetch(video_id, languages=languages)
+    from youtube_transcript_api import IpBlocked, RequestBlocked
+
+    try:
+        transcript = _transcript_api().fetch(video_id, languages or ["en"])
+    except (IpBlocked, RequestBlocked) as blocked:
+        raise TranscriptBlockedError(
+            "YouTube blocked this server's IP, which is normal for cloud hosts. "
+            "Either set TRANSCRIPT_PROXY_HTTPS_URL in the app secrets, or switch to "
+            "'Paste / upload transcript' and feed the app a .srt you downloaded yourself."
+        ) from blocked
+    return _clean_snippets((item.start for item in transcript), (item.text for item in transcript))
+
+
+def _clean_snippets(starts, texts) -> list[Snippet]:
     snippets: list[Snippet] = []
-    for item in transcript:
-        text = _NOISE.sub(" ", item.text)
-        text = re.sub(r"\s+", " ", text).strip()
+    for start, raw in zip(starts, texts):
+        text = re.sub(r"\s+", " ", _NOISE.sub(" ", raw)).strip()
         if text:
-            snippets.append(Snippet(start=int(item.start), text=text))
-    snippets.sort(key=lambda s: s.start)
+            snippets.append(Snippet(start=None if start is None else int(start), text=text))
+    snippets.sort(key=lambda s: s.start if s.start is not None else 0)
+    return snippets
+
+
+_CUE = re.compile(
+    r"^(?P<start>(?:\d{1,2}:)?\d{1,2}:\d{2})[.,]\d{3}\s*-->\s*(?:\d{1,2}:)?\d{1,2}:\d{2}[.,]\d{3}"
+)
+
+
+def _cue_to_seconds(value: str) -> int:
+    parts = [int(p) for p in value.replace(",", ".").split(":")]
+    if len(parts) == 2:
+        minutes, secs = parts
+        return minutes * 60 + secs
+    hours, minutes, secs = parts
+    return hours * 3600 + minutes * 60 + secs
+
+
+def parse_uploaded_transcript(raw: str) -> list[Snippet]:
+    """Accept YouTube's .srt/.vtt export (keeps timestamps) or plain text (no timestamps)."""
+    if "-->" not in raw:
+        return _plain_snippets(raw)
+
+    starts: list[int | None] = []
+    texts: list[str] = []
+    pending_start: int | None = None
+    buffer: list[str] = []
+
+    for line in raw.splitlines():
+        stripped = line.strip().replace("\ufeff", "")
+        cue = _CUE.match(stripped)
+        if cue:
+            pending_start = _cue_to_seconds(cue.group("start"))
+            continue
+        if not stripped:
+            if buffer and pending_start is not None:
+                starts.append(pending_start)
+                texts.append(" ".join(buffer))
+            buffer, pending_start = [], None
+            continue
+        if stripped.isdigit() or stripped.startswith("WEBVTT") or stripped.startswith("Kind:") or stripped.startswith("Language:"):
+            continue
+        buffer.append(stripped)
+
+    if buffer and pending_start is not None:
+        starts.append(pending_start)
+        texts.append(" ".join(buffer))
+
+    return _clean_snippets(iter(starts), iter(texts))
+
+
+def _plain_snippets(raw: str, target_chars: int = 220) -> list[Snippet]:
+    """Split timestamp-free text on sentence boundaries so chunking stays uniform."""
+    text = re.sub(r"\s+", " ", raw).strip()
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    snippets: list[Snippet] = []
+    buffer = ""
+    for sentence in sentences:
+        if not sentence:
+            continue
+        if buffer and len(buffer) + len(sentence) > target_chars:
+            snippets.append(Snippet(start=None, text=buffer))
+            buffer = sentence
+        else:
+            buffer = f"{buffer} {sentence}".strip()
+    if buffer:
+        snippets.append(Snippet(start=None, text=buffer))
     return snippets
 
 
@@ -114,7 +216,9 @@ def chunk_snippets(
 
 def chunk_to_text(batch: list[Snippet], batch_index: int) -> str:
     """Timestamped chunk text; the header survives retrieval for citations."""
-    header = f"[{batch_index}-{len(batch) - 1}] {format_time(batch[0].start)} - {format_time(batch[-1].start)}"
+    index_range = f"[{batch_index}-{len(batch) - 1}]"
+    first, last = batch[0].start, batch[-1].start
+    header = index_range if first is None else f"{index_range} {format_time(first)} - {format_time(last)}"
     body = " ".join(s.text for s in batch)
     return f"{header}\n{body}"
 

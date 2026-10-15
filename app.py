@@ -56,6 +56,13 @@ def embed_chunks(chunks: tuple[str, ...]) -> list[list[float]]:
     return pipeline.GeminiBatchEmbeddings(get_api_key()).embed_documents(list(chunks))
 
 
+@st.cache_data(show_spinner=False)
+def chunks_from_upload(raw_text: str, chunk_chars: int) -> list[str]:
+    """Same chunking as the YouTube path, from an .srt/.vtt export or pasted text."""
+    batches = pipeline.chunk_snippets(pipeline.parse_uploaded_transcript(raw_text), chunk_chars=chunk_chars)
+    return [pipeline.chunk_to_text(batch, i) for i, batch in enumerate(batches)]
+
+
 def init_state() -> None:
     st.session_state.setdefault("video_id", None)
     st.session_state.setdefault("video_title", "")
@@ -65,12 +72,12 @@ def init_state() -> None:
     st.session_state.setdefault("notes", "")
 
 
-def citation_line(chunk_text: str, video_id: str) -> str:
+def citation_line(chunk_text: str, video_id: str | None) -> str:
     _, _, label = pipeline.chunk_label(chunk_text)
     if not label:
         return ""
     seconds = notes_module.seconds_from_label(label)
-    if seconds is None:
+    if seconds is None or not video_id:
         return f"> 🕒 `{label}`"
     return f"> 🕒 [`{label}`](https://www.youtube.com/watch?v={video_id}&t={seconds}s)"
 
@@ -87,47 +94,72 @@ if not api_key:
         "`GEMINI_API_KEY=your_key` (local) or add it in Streamlit Cloud secrets."
     )
 
-left, right = st.columns([3, 1])
-with left:
+source = st.radio(
+    "Transcript source",
+    ["🔗 YouTube URL", "📄 Paste / upload transcript"],
+    horizontal=True,
+    help=(
+        "YouTube blocks requests from cloud IPs, so a deployed app often cannot fetch "
+        "transcripts directly. The upload path needs no YouTube access at all."
+    ),
+)
+chunk_size = st.slider("Chunk size (characters)", 600, 2000, 1200, step=100)
+
+video_id = None
+if source == "🔗 YouTube URL":
     youtube_url = st.text_input("YouTube video URL or ID", placeholder="https://www.youtube.com/watch?v=...")
-with right:
     language = st.selectbox(
         "Transcript language",
         ["en", "hi", "es", "fr", "de", "pt", "ja", "zh-CN"],
         help="Fallback order: the selected language, then English.",
     )
-    chunk_size = st.slider("Chunk size (characters)", 600, 2000, 1200, step=100)
+    if youtube_url:
+        video_id = pipeline.extract_video_id(youtube_url.strip())
+        if video_id:
+            st.video(youtube_url)
+        else:
+            st.error("That does not look like a YouTube URL.")
 
-if youtube_url:
-    video_id = pipeline.extract_video_id(youtube_url.strip())
-    if video_id:
-        st.video(youtube_url)
-    else:
-        st.error("That does not look like a YouTube URL.")
-        video_id = None
-else:
-    video_id = None
-
-if st.button("🚀 Process video", type="primary", disabled=not video_id or not api_key):
+    title = pipeline.fetch_video_title(video_id) if video_id else ""
     languages = tuple(dict.fromkeys([language, "en"]))
+
+    def collect_chunks() -> list[str]:
+        return build_chunks(video_id, languages, chunk_size)
+
+    ready = bool(video_id)
+else:
+    uploaded = st.file_uploader("Upload a .srt / .vtt / .txt export", type=["srt", "vtt", "txt"])
+    pasted = st.text_area("...or paste transcript text", height=180, placeholder="Paste the transcript here")
+    title = st.text_input("Title used for your notes", "Uploaded transcript")
+    link = st.text_input("Optional video URL", placeholder="only needed for clickable timestamps")
+    if link:
+        video_id = pipeline.extract_video_id(link.strip())
+    raw_text = uploaded.getvalue().decode("utf-8-sig", errors="ignore") if uploaded else pasted
+
+    def collect_chunks() -> list[str]:
+        return chunks_from_upload(raw_text, chunk_size)
+
+    ready = bool(raw_text.strip())
+
+if st.button("🚀 Process video", type="primary", disabled=not ready or not api_key):
     try:
         with st.spinner("🎬 Loading transcript..."):
-            chunks = build_chunks(video_id, languages, chunk_size)
+            chunks = collect_chunks()
             if not chunks:
-                raise ValueError("No transcript found for this video. Try another language or video.")
+                raise ValueError("No usable transcript text was found.")
 
         with st.spinner("🗂️ Indexing chunks..."):
             vector_store = pipeline.build_vector_store(chunks, embed_chunks(tuple(chunks)), api_key)
 
         st.session_state.update(
             video_id=video_id,
-            video_title=pipeline.fetch_video_title(video_id),
+            video_title=title,
             chunks=chunks,
             vector_store=vector_store,
             messages=[],
             notes="",
         )
-        st.success(f"✅ Ready — {st.session_state.video_title} ({len(chunks)} chunks)")
+        st.success(f"✅ Ready — {title} ({len(chunks)} chunks)")
     except Exception as error:
         st.error(f"Could not process this video: {error}")
 
@@ -219,7 +251,9 @@ with notes_tab:
                 pdf_bytes = render_pdf(
                     st.session_state.notes,
                     ready_title,
-                    f"https://www.youtube.com/watch?v={st.session_state.video_id}",
+                    f"https://www.youtube.com/watch?v={st.session_state.video_id}"
+                    if st.session_state.video_id
+                    else "",
                 )
             except Exception as error:
                 pdf_bytes = None

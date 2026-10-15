@@ -1,7 +1,44 @@
 """Offline smoke test for the pure logic (no API keys, no network needed)."""
 
+import os
+
+os.environ["RATE_LIMIT_GAP_SECONDS"] = "0"  # the stub LLM never hits a real quota
+os.environ["RATE_LIMIT_EMBED_GAP_SECONDS"] = "0"
+
 import pipeline
 import notes
+
+
+def test_rate_limit():
+    import ratelimit
+
+    err = Exception("429 RESOURCE_EXHAUSTED ... 'retryDelay': '41s'")
+    assert ratelimit.is_rate_limit(err)
+    assert ratelimit.retry_delay(err, 0) == 42
+    assert not ratelimit.is_rate_limit(Exception("bad request"))
+    assert ratelimit.retry_delay(Exception("bad request"), 0) == 4  # exponential fallback
+    assert ratelimit.retry_delay(Exception("plain 429"), 4) == 60  # capped
+
+    attempts = {"n": 0}
+
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise Exception("429 RESOURCE_EXHAUSTED")
+        return "ok"
+
+    assert ratelimit.with_retry(flaky) == "ok"
+    assert attempts["n"] == 3
+
+    def broken():
+        raise ValueError("not a quota problem")
+
+    try:
+        ratelimit.with_retry(broken)
+        raise AssertionError("should have re-raised")
+    except ValueError:
+        pass
+    print("rate-limit handling ok (parses retryDelay, retries 429 only)")
 
 
 def test_video_ids():
@@ -91,6 +128,7 @@ def test_pdf_export():
 
 test_video_ids()
 test_chunking()
+test_rate_limit()
 test_notes_flow()
 test_pdf_export()
 print("\nALL CHECKS PASSED")

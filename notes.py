@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 
-BATCH_SIZE = 6
+import rag
+
+BATCH_SIZE = 12  # bigger batches mean fewer chat calls, which the free tier caps hardest
 
 _MAP_PROMPT = """You are preparing study notes from one section of a YouTube transcript.
 Every block below is prefixed with its in-video timestamp range.
@@ -96,15 +98,14 @@ def generate_notes(
     total_steps = len(batches) + 1
     for index, batch in enumerate(batches):
         section = "\n\n".join(f"{line_first(chunk)}\n{_chunk_body(chunk)}" for chunk in batch)
-        result = llm.invoke(_MAP_PROMPT + section)
-        points.append(result.content.strip())
+        points.append(rag.call_llm(llm, _MAP_PROMPT + section).strip())
         if progress:
             progress(index + 1, total_steps, f"Reading section {index + 1} of {len(batches)}...")
 
     if progress:
         progress(len(batches), total_steps, "Writing your notes...")
     reduce_prompt = _REDUCE_PROMPT_HEADER.format(title=title) + "\n\n".join(points)
-    final = llm.invoke(reduce_prompt).content.strip()
+    final = rag.call_llm(llm, reduce_prompt).strip()
     if progress:
         progress(total_steps, total_steps, "Notes ready")
     return final

@@ -51,6 +51,11 @@ def build_chunks(video_id: str, languages: tuple[str, ...], chunk_chars: int) ->
     return [pipeline.chunk_to_text(batch, i) for i, batch in enumerate(batches)]
 
 
+@st.cache_data(show_spinner="🧠 Creating embeddings (batched, ~1 call per 90 chunks)...")
+def embed_chunks(chunks: tuple[str, ...]) -> list[list[float]]:
+    return pipeline.GeminiBatchEmbeddings(get_api_key()).embed_documents(list(chunks))
+
+
 def init_state() -> None:
     st.session_state.setdefault("video_id", None)
     st.session_state.setdefault("video_title", "")
@@ -111,8 +116,8 @@ if st.button("🚀 Process video", type="primary", disabled=not video_id or not 
             if not chunks:
                 raise ValueError("No transcript found for this video. Try another language or video.")
 
-        with st.spinner("🧠 Creating embeddings and the FAISS index..."):
-            vector_store = pipeline.build_vector_store(chunks, api_key)
+        with st.spinner("🗂️ Indexing chunks..."):
+            vector_store = pipeline.build_vector_store(chunks, embed_chunks(tuple(chunks)), api_key)
 
         st.session_state.update(
             video_id=video_id,

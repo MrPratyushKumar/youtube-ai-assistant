@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
 import requests
+from langchain_core.embeddings import Embeddings
 from youtube_transcript_api import YouTubeTranscriptApi
 
+import ratelimit
+
 OEMBED_URL = "https://www.youtube.com/oembed"
+EMBED_GAP_SECONDS = float(os.environ.get("RATE_LIMIT_EMBED_GAP_SECONDS", "0.8"))
 _NOISE = re.compile(r"\[Music\]|\[Applause\]|\[\s*\]", re.IGNORECASE)
 _TIMESTAMP = re.compile(r"^\[(\d+)-(\d+)\]\s*(\S+)\s*-\s*(\S+)")
 
@@ -123,11 +128,49 @@ def chunk_label(chunk_text: str) -> tuple[int, int, str]:
     return int(match.group(1)), int(match.group(2)), f"{match.group(3)} - {match.group(4)}"
 
 
-def build_vector_store(chunks: list[str], api_key: str):
-    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+def build_vector_store(chunks: list[str], vectors: list[list[float]], api_key: str):
+    """Assemble FAISS from pre-computed vectors, so re-runs cost zero embedding calls."""
     from langchain_community.vectorstores import FAISS
 
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001", google_api_key=api_key
+    return FAISS.from_embeddings(
+        texts=chunks, embedding=GeminiBatchEmbeddings(api_key), embeddings=vectors
     )
-    return FAISS.from_texts(texts=chunks, embedding=embeddings)
+
+
+class GeminiBatchEmbeddings(Embeddings):
+    """Gemini embeddings that send many texts per request.
+
+    LangChain's own wrapper issues one request per document, which blows through
+    the free tier's 100 embed-requests-per-minute cap on any long transcript.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "models/gemini-embedding-001",
+        batch_size: int = 90,
+    ) -> None:
+        from google.genai import Client
+
+        self._client = Client(api_key=api_key)
+        self._model = model
+        self.batch_size = batch_size
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            vectors.extend(self._embed_batch(texts[start : start + self.batch_size]))
+        return vectors
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._embed_batch([text])[0]
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        # Embeddings allow 100 requests/min, so they need a much lighter gap than chat.
+        return ratelimit.with_retry(
+            lambda: self._call(texts), gap=EMBED_GAP_SECONDS
+        )
+
+    def _call(self, texts: list[str]) -> list[list[float]]:
+        response = self._client.models.embed_content(model=self._model, contents=texts)
+        return [list(item.values) for item in response.embeddings]

@@ -97,6 +97,7 @@ The same `**[mm:ss]**` markers survive into the PDF, where `fpdf2` renders them 
 | Chat model = `gemini-flash-latest`, not a dated snapshot | Google retires pinned versions for new API keys — a `gemini-2.5-flash` deployment now 404s on every question. Override with `GEMINI_CHAT_MODEL` |
 | `thinking_budget=0` on chat calls | Retrieval-augmented answers restate context instead of reasoning over it; measured 432 of 500 output tokens were hidden reasoning, ~40s per question instead of ~2s |
 | Daily quota fails fast instead of retrying | Per-minute and per-day exhaustion both arrive as 429, but waiting out a *daily* cap is pointless — it would hang a demo for five minutes to no purpose |
+| Cloud PDFs download Noto Sans once | Streamlit's image installs no TrueType fonts, and the core PDF fonts are latin-1 only, so `café` and `₹` would vanish silently. One cached download per container covers the rest of Unicode; a host with no egress still renders, just plainer |
 | Fixed "not in the transcript" reply | A RAG demo is only trustworthy when it refuses instead of inventing |
 
 ---
@@ -159,7 +160,8 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini Flash · FAIS
 | Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 12 |
 | `faiss-cpu` will not install | Use Python 3.11–3.13; pre-built wheels lag behind brand-new Python releases |
 | `FAISS.from_embeddings() missing ... 'text_embeddings'` | A LangChain version drifted out from under the code — `requirements.txt` is pinned to the versions this repo is tested against, so reinstall with `pip install -r requirements.txt --force-reinstall` |
-| PDF text looks plain / some characters missing | `pdf_export.py` auto-picks Arial → Calibri → DejaVu. Force one with `PDF_FONT_PATH=C:\Windows\Fonts\arial.ttf` (or `PDF_FONT_DIR`) |
+| PDF text looks plain / some characters missing | `pdf_export.py` auto-picks Arial → Calibri → DejaVu; a host with **no** TrueType fonts (Streamlit Cloud) downloads Noto Sans once and caches it in the temp dir. Force one with `PDF_FONT_PATH=C:\Windows\Fonts\arial.ttf` (or `PDF_FONT_DIR`) |
+| `Undefined font: notesB` | The page header needs the font family while `add_page()` is still running, so it has to be decided before any page exists. Current `pdf_export.py` does that (`_resolve_family()`); if you hit this, pull the latest version of that file |
 
 ## 📄 License
 

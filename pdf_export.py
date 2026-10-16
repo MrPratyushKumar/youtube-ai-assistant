@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 
 import markdown as md
+import requests
 from fpdf import FPDF
 
 ACCENT = (37, 99, 235)
@@ -29,6 +31,49 @@ _FONT_DIRS = [
 _LINK_TIMESTAMP = re.compile(r"\*\*\[`?(\d{1,2}(?::\d{2}){1,2})`?\]\((https?://[^)]+)\)\*\*")
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF\U00002190-\U00002BFF\U0000FE0F\U0000200D]")
 
+_NOTO_URL = "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoSans/"
+_NOTO_FILES = {
+    "": "NotoSans-Regular.ttf",
+    "B": "NotoSans-Bold.ttf",
+    "I": "NotoSans-Italic.ttf",
+    "BI": "NotoSans-BoldItalic.ttf",
+}
+_TTF_MAGICS = (b"\x00\x01\x00\x00", b"true", b"OTTO")
+_DOWNLOAD_TIMEOUT = 30
+_download_unavailable: set[str] = set()
+
+
+def _download_font(style: str) -> str | None:
+    """Fetch the Noto Sans file for `style`, cached in the temp directory.
+
+    Cloud images ship no TrueType fonts, which leaves only the core fonts — latin-1,
+    so they drop accented letters and currency symbols from the notes silently.
+    Downloading once per container keeps the full Unicode range; a host with no
+    egress just gets the core fonts back.
+    """
+    if style in _download_unavailable:
+        return None
+    name = _NOTO_FILES[style]
+    path = os.path.join(tempfile.gettempdir(), "youtube-ai-assistant-fonts", name)
+    if os.path.isfile(path) and os.path.getsize(path) > 10_000:
+        return path
+    try:
+        response = requests.get(_NOTO_URL + name, timeout=_DOWNLOAD_TIMEOUT)
+        response.raise_for_status()
+        data = response.content
+        if data[:4] not in _TTF_MAGICS:
+            raise ValueError(f"{name} is not a TrueType file")
+        folder = os.path.dirname(path)
+        os.makedirs(folder, exist_ok=True)
+        partial = path + ".part"
+        with open(partial, "wb") as handle:
+            handle.write(data)
+        os.replace(partial, path)  # never leave a truncated font in the cache
+        return path
+    except Exception:
+        _download_unavailable.add(style)
+        return None
+
 
 def _find_font(style: str) -> str | None:
     override = os.environ.get("PDF_FONT_PATH")
@@ -39,7 +84,7 @@ def _find_font(style: str) -> str | None:
         path = index.get(name.lower())
         if path:
             return path
-    return None
+    return _download_font(style)
 
 
 _index: dict[str, str] | None = None

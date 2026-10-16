@@ -228,22 +228,47 @@ def test_pdf_font_fallback():
     import pdf_export
 
     saved_index = pdf_export._index
+    saved_download = pdf_export._download_font
     regular = pdf_export._find_font("")
     assert regular, "needs a real TTF on the test machine"
     body = "**bold point** and *emphasis* and [0:12](https://youtu.be/x?t=12)"
     try:
         pdf_export._index = {}  # nothing installed
+        pdf_export._download_font = lambda style: None  # and no egress either
         assert pdf_export._resolve_family() == pdf_export._CORE_FAMILY
         assert pdf_export.notes_to_pdf(body, "T", "https://youtu.be/x")[:5] == b"%PDF-"
         assert pdf_export.notes_to_pdf("café — ₹ → ✅", "T", "")[:5] == b"%PDF-"
 
+        pdf_export._download_font = lambda style: regular  # downloaded Noto Sans
+        assert pdf_export._resolve_family() == "Notes"
+        assert pdf_export.notes_to_pdf("café — ₹ → ✅", "T", "")[:5] == b"%PDF-"
+
+        pdf_export._download_font = saved_download
         all_names = [n for names in pdf_export._FONT_CANDIDATES.values() for n in names]
         pdf_export._index = {name.lower(): regular for name in all_names}  # bold/italic files missing
         assert pdf_export._resolve_family() == "Notes"
         assert pdf_export.notes_to_pdf(body, "T", "https://youtu.be/x")[:5] == b"%PDF-"
-        print("pdf font fallback ok (no fonts -> core family, missing bold -> single TTF)")
+        print("pdf font fallback ok (no fonts -> core family, downloaded font -> Notes, missing bold -> single TTF)")
     finally:
         pdf_export._index = saved_index
+        pdf_export._download_font = saved_download
+
+
+def test_font_download():
+    """The Noto Sans URLs the cloud fallback depends on must still serve real TTFs."""
+    import pdf_export
+
+    paths = {style: pdf_export._download_font(style) for style in pdf_export._NOTO_FILES}
+    if not any(paths.values()):  # offline run — nothing to check
+        print("font download SKIPPED (no network)")
+        return
+    for style, path in paths.items():
+        assert path and os.path.isfile(path), f"{style or 'regular'} font download failed"
+        with open(path, "rb") as handle:
+            assert handle.read(4) in pdf_export._TTF_MAGICS, path
+    assert pdf_export._download_font("") == paths[""]  # second call reads the cache
+    print(f"font download ok (4 TTFs cached in {os.path.dirname(paths[''])})")
+
 
 
 test_video_ids()
@@ -255,4 +280,5 @@ test_vector_store()
 test_notes_flow()
 test_pdf_export()
 test_pdf_font_fallback()
+test_font_download()
 print("\nALL CHECKS PASSED")

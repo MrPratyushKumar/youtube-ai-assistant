@@ -82,6 +82,15 @@ def citation_line(chunk_text: str, video_id: str | None) -> str:
     return f"> 🕒 [`{label}`](https://www.youtube.com/watch?v={video_id}&t={seconds}s)"
 
 
+def mention_fallback_model() -> None:
+    """A cheaper model answering because the primary ran out of quota is worth saying."""
+    if rag.last_model and rag.last_model != rag.DEFAULT_MODEL:
+        st.caption(
+            f"⚠️ `{rag.DEFAULT_MODEL}` is out of free quota right now — "
+            f"`{rag.last_model}` answered instead."
+        )
+
+
 # ------------------------------------------------------------------- ui ----
 init_state()
 st.title("🎥 YouTube AI Assistant")
@@ -193,8 +202,9 @@ with chat_tab:
             display = answer + ("\n\n" + sources if sources else "")
             st.chat_message("assistant").markdown(display)
             st.session_state.messages.append({"role": "assistant", "content": display})
+            mention_fallback_model()
         except Exception as error:
-            st.error(f"Error: {error}")
+            st.error(f"Chat failed: {error}")
 
     if st.session_state.messages and st.button("🧹 Clear chat"):
         st.session_state.messages = []
@@ -234,6 +244,7 @@ with notes_tab:
                 st.session_state.video_id,
             )
             st.session_state.notes = markdown_notes
+            mention_fallback_model()
         except Exception as error:
             st.error(f"Could not generate notes: {error}")
 

@@ -59,10 +59,136 @@ def test_rate_limit():
     try:
         ratelimit.with_retry(exhausted)
         raise AssertionError("daily quota should fail fast, not retry")
-    except RuntimeError as fast:
-        assert "gemini-3.8-flash" in str(fast) and "20/day" in str(fast), fast
+    except ratelimit.QuotaError as fast:
+        assert "gemini-3.8-flash" in str(fast) and "20 per day" in str(fast), fast
     assert time.monotonic() - started < 1, "must not sit in the retry loop"
-    print("rate-limit handling ok (retryDelay, 429-only retries, daily quota fails fast)")
+
+    # Captured verbatim from a deployed run: a hard quota with no retryDelay attached.
+    hard = Exception(
+        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your "
+        "current quota, please check your plan and billing details. For more information "
+        "on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To "
+        "monitor your current usage, head to: https://ai.dev/rate-limit. ', 'status': "
+        "'RESOURCE_EXHAUSTED', 'details': [{'@type': "
+        "'type.googleapis.com/google.rpc.Help'}]}}"
+    )
+    assert ratelimit.is_rate_limit(hard) and ratelimit.is_hard_quota(hard)
+    assert not ratelimit.is_daily_quota(hard)
+
+    attempts = {"n": 0}
+
+    def billed():
+        attempts["n"] += 1
+        raise hard
+
+    started = time.monotonic()
+    try:
+        ratelimit.with_retry(billed, gap=0)
+        raise AssertionError("a hard quota must not consume the whole retry budget")
+    except ratelimit.QuotaError as clean:
+        assert attempts["n"] == 2, attempts  # one proving retry, then stop
+        assert "{'error'" not in str(clean) and "ai.dev/rate-limit" in str(clean), clean
+        assert "that model" in str(clean)
+    assert time.monotonic() - started < 20, "bounded waiting"
+
+    def hinted():
+        raise Exception(str(hard) + " model: gemini-embedding-001")
+
+    try:
+        ratelimit.with_retry(hinted, retries=1, gap=0, hint="gemini-embedding-001")
+        raise AssertionError("should have raised")
+    except ratelimit.QuotaError as named:
+        assert "gemini-embedding-001" in str(named), named
+
+    # 503 is Google's own "come back later", so it belongs in the retry loop.
+    overload = {"n": 0}
+
+    def busy():
+        overload["n"] += 1
+        if overload["n"] < 2:
+            raise Exception("503 UNAVAILABLE. This model is currently experiencing high demand.")
+        return "served"
+
+    assert ratelimit.is_rate_limit(Exception("503 UNAVAILABLE"))
+    assert ratelimit.with_retry(busy, gap=0) == "served"
+    assert overload["n"] == 2
+
+    # A rejected key or a retired model is a settings problem, not a quota story.
+    assert "API key was rejected" in str(ratelimit.describe(Exception("401 UNAUTHENTICATED"), "gemini-flash-latest"))
+    assert "Generative Language API" in str(ratelimit.describe(Exception("403 PERMISSION_DENIED"), ""))
+    assert isinstance(ratelimit.describe(Exception("404 models/gemini-2.5-flash is not found"), "x"), ratelimit.ConfigError)
+    assert isinstance(ratelimit.describe(ValueError("boom"), ""), ValueError)
+
+    def rejected():
+        raise Exception("401 UNAUTHENTICATED. API key not valid.")
+
+    try:
+        ratelimit.with_retry(rejected, gap=0)
+        raise AssertionError("should have raised")
+    except ratelimit.ConfigError as why:
+        assert "restart" in str(why), why
+    print("rate-limit handling ok (retryDelay, 503 retries, quota and config errors all read as sentences)")
+
+
+def test_model_fallback():
+    """A quota error on one Gemini model must not end the demo — siblings have their own budget."""
+    import ratelimit
+    import rag
+
+    assert rag.candidate_models("gemini-flash-lite-latest") == [
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+    ]
+    assert rag.candidate_models("gemini-custom") == ["gemini-custom", "gemini-flash-lite-latest", "gemini-flash-latest"]
+
+    quota = Exception(
+        "429 RESOURCE_EXHAUSTED. You exceeded your current quota, check your plan and billing details."
+    )
+
+    class Flaky:
+        model = "gemini-flash-latest"
+        temperature = 0.2
+        google_api_key = "fake"
+
+        def __init__(self):
+            self.seen = []
+
+        def invoke(self, prompt):
+            self.seen.append(self.model)
+            if self.model == "gemini-flash-latest":
+                raise ratelimit.QuotaError("quota gone")
+            return type("R", (), {"content": [{"type": "text", "text": "from lite"}]})()
+
+    llm = Flaky()
+
+    def fake_rebuild(source, model):
+        replacement = Flaky()
+        replacement.model = model
+        replacement.seen = llm.seen
+        return replacement
+
+    original, original_last = rag._rebuild, rag.last_model
+    rag._rebuild = fake_rebuild
+    try:
+        assert rag.call_llm(llm, "question") == "from lite"
+        assert rag.last_model == "gemini-flash-lite-latest", rag.last_model
+        assert llm.seen == ["gemini-flash-latest", "gemini-flash-lite-latest"], llm.seen
+
+        class Broken(Flaky):
+            model = "gemini-flash-lite-latest"
+
+            def invoke(self, prompt):
+                raise ValueError("some unexpected state")
+
+        try:
+            rag.call_llm(Broken(), "question")
+            raise AssertionError("a real bug must not be reported as a quota problem")
+        except ValueError:
+            pass
+    finally:
+        rag._rebuild = original
+        rag.last_model = original_last
+    print(f"model fallback ok ({llm.seen})")
 
 
 def test_video_ids():
@@ -339,6 +465,7 @@ test_video_ids()
 test_chunking()
 test_upload_parsing()
 test_rate_limit()
+test_model_fallback()
 test_llm_response_shapes()
 test_vector_store()
 test_notes_flow()

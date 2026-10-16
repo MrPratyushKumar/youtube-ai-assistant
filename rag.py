@@ -46,6 +46,30 @@ def make_llm(api_key: str, temperature: float = 0.2) -> ChatGoogleGenerativeAI:
     )
 
 
+# Free-tier budgets are counted per model, so a sibling that still has room can keep
+# a demo alive on the day the primary model runs out.
+FALLBACK_MODELS = ("gemini-flash-lite-latest", "gemini-flash-latest")
+
+# Set by call_llm() when a fallback answered; the UI mentions it so notes written by a
+# cheaper model are not mistaken for a quality regression in the primary one.
+last_model = None
+
+
+def candidate_models(primary: str) -> list[str]:
+    models = [primary, *FALLBACK_MODELS]
+    return list(dict.fromkeys(m for m in models if m))
+
+
+def _rebuild(llm, model: str) -> ChatGoogleGenerativeAI:
+    api_key = llm.google_api_key
+    return ChatGoogleGenerativeAI(
+        model=model,
+        google_api_key=getattr(api_key, "get_secret_value", lambda: api_key)(),
+        temperature=llm.temperature,
+        **thinking_kwargs(model),
+    )
+
+
 def response_text(content) -> str:
     """Flatten a chat response to plain text.
 
@@ -64,8 +88,35 @@ def response_text(content) -> str:
 
 
 def call_llm(llm, prompt: str) -> str:
-    """One chat completion, spaced and retried for the free tier's ~10 requests/min."""
-    return response_text(ratelimit.with_retry(lambda: llm.invoke(prompt)).content)
+    """One chat completion: throttled, retried, then tried on sibling models.
+
+    A quota error on one Gemini model says nothing about the others — each carries its
+    own free-tier budget — so the app keeps answering on the day the primary runs out,
+    instead of dying on the first 429.
+    """
+    global last_model
+    primary = getattr(llm, "model", DEFAULT_MODEL)
+    tried: list[str] = []
+    for model in candidate_models(primary):
+        attempt = llm if model == primary else _rebuild(llm, model)
+        try:
+            answer = response_text(
+                ratelimit.with_retry(
+                    lambda: attempt.invoke(prompt),
+                    retries=1 if tried else ratelimit.MAX_RETRIES,
+                    hint=model,
+                ).content
+            )
+        except ratelimit.QuotaError:
+            tried.append(model)
+            continue
+        last_model = model
+        return answer
+    raise RuntimeError(
+        f"Gemini has no free-tier capacity left for {', '.join(tried)}. "
+        "Allowances reset at midnight Pacific — check https://ai.dev/rate-limit, "
+        "wait for the reset, or attach a billed key to the app secrets."
+    )
 
 
 

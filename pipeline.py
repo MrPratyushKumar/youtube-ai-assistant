@@ -344,7 +344,9 @@ class GeminiBatchEmbeddings(Embeddings):
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         # Embeddings allow 100 requests/min, so they need a much lighter gap than chat.
         return ratelimit.with_retry(
-            lambda: self._call(texts), gap=EMBED_GAP_SECONDS
+            lambda: self._call(texts),
+            gap=EMBED_GAP_SECONDS,
+            hint=self._model.rsplit("/", 1)[-1],
         )
 
     def _call(self, texts: list[str]) -> list[list[float]]:

@@ -204,13 +204,18 @@ with chat_tab:
 with notes_tab:
     st.markdown(f"### Study notes for **{ready_title}**")
     st.caption(notes_module.estimate_cost_note(len(st.session_state.chunks)))
-    coverage = st.slider(
-        "How many transcript chunks to read",
-        5,
-        max(5, len(st.session_state.chunks)),
-        min(max(5, len(st.session_state.chunks)), 80),
-        help="More chunks = better notes but more API calls. The transcript is processed in batches.",
-    )
+    total_chunks = len(st.session_state.chunks)
+    if total_chunks > 1:
+        coverage = st.slider(
+            "How many transcript chunks to read",
+            1,
+            total_chunks,
+            min(total_chunks, 80),
+            help="More chunks = better notes but more API calls. The transcript is processed in batches.",
+        )
+    else:
+        coverage = total_chunks
+        st.caption("This transcript fits in a single batch, so there is nothing to trim.")
 
     if st.button("📝 Generate notes", type="primary"):
         progress_bar = st.progress(0.0, text="Preparing...")

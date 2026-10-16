@@ -1,4 +1,4 @@
-"""Offline smoke test for the pure logic (no API keys, no network needed)."""
+"""Smoke test for the whole app: no API key needed, and the one network probe self-skips."""
 
 import os
 import time
@@ -100,7 +100,10 @@ class StubLLM:
         self.calls += 1
         if self.calls <= 2:
             return type("R", (), {"content": "- **[0:00]** first point\n- **[0:14]** second point"})()
-        return type("R", (), {"content": "# Notes\n\n## 2. Key Takeaways\n- **[0:21]** a point"})()
+        return type("R", (), {"content": (
+            "# Notes\n\n## 2. Key Takeaways\n- **[0:21]** a point\n\n"
+            "## 4. Concepts\nTerm | Meaning\n--- | ---\n**REST** | an *architecture*\n"
+        )})()
 
 
 def test_notes_flow():
@@ -129,7 +132,7 @@ NOTES_SAMPLE = """# Demo Video
 ## 4. Concepts & Definitions
 Term | Meaning
 --- | ---
-Embedding | A numeric vector representing meaning
+**Embedding** | A *numeric vector* representing meaning
 
 ## 7. Self-Test Questions
 **Q: Why overlap chunks?**
@@ -271,6 +274,67 @@ def test_font_download():
 
 
 
+def test_pdf_table_cells():
+    """fpdf2 aborts on emphasis in a table cell and loses links to nested tags."""
+    import pdf_export
+
+    markdown = (
+        "## Glossary\n| Term | When |\n|---|---|\n"
+        "| **REST** | **[`0:21`](https://youtu.be/x?t=21)** |\n\n"
+        "## Points\n- **[`2:40`](https://youtu.be/x?t=160)** body link\n"
+    )
+    html = pdf_export._to_html(markdown, "helvetica")
+    table = html[html.index("<table>") : html.index("</table>")]
+    assert "<td>REST</td>" in table and "<td>0:21</td>" in table, table
+    assert "<strong" not in table and "<a " not in table, table
+    assert '<a href="https://youtu.be/x?t=160"' in html  # links outside tables stay links
+    assert pdf_export.notes_to_pdf(markdown, "T", "")[:5] == b"%PDF-"
+    print("pdf table cells ok (bold/link cells flatten to text, export survives)")
+
+
+def test_app_flow():
+    """Headless click through app.py: a one-chunk upload must reach a downloadable PDF."""
+    import rag
+    from streamlit.testing.v1 import AppTest
+
+    os.environ["GEMINI_API_KEY"] = "smoke-test-key-not-used"
+
+    class StubEmbeddings:
+        def __init__(self, api_key):
+            pass
+
+        def embed_documents(self, texts):
+            return [[1.0, 0.0, 0.0] for _ in texts]
+
+        def embed_query(self, text):
+            return [0.9, 0.1, 0.0]
+
+    pipeline.GeminiBatchEmbeddings = StubEmbeddings
+    rag.make_llm = lambda api_key, temperature=0.2: StubLLM()
+
+    def click(at, label):
+        labels = [button.label for button in at.button]
+        assert label in labels, labels
+        at.button[labels.index(label)].click()
+        at.run()
+
+    at = AppTest.from_file(os.path.join(os.path.dirname(__file__) or ".", "app.py"), default_timeout=120)
+    at.run()
+    at.radio[0].set_value("📄 Paste / upload transcript")
+    at.run()
+    at.text_area[0].set_value("0:00\nAPIs are messengers.\n0:07\nThey hide complexity.\n")
+    at.run()
+    click(at, "🚀 Process video")
+    assert not at.exception, at.exception
+    assert [s.value for s in at.success][0].endswith("(1 chunks)"), [s.value for s in at.success]
+    click(at, "📝 Generate notes")
+    assert not at.exception, at.exception
+    assert not at.error, [e.value for e in at.error]
+    downloads = [button.label for button in at.download_button]
+    assert any("PDF" in label for label in downloads), downloads
+    print(f"app flow ok (1-chunk upload -> notes -> {downloads})")
+
+
 test_video_ids()
 test_chunking()
 test_upload_parsing()
@@ -280,5 +344,7 @@ test_vector_store()
 test_notes_flow()
 test_pdf_export()
 test_pdf_font_fallback()
+test_pdf_table_cells()
 test_font_download()
+test_app_flow()
 print("\nALL CHECKS PASSED")

@@ -118,8 +118,28 @@ def _prepare(markdown_text: str) -> str:
     return text.strip()
 
 
+_CELL = re.compile(r"(<t[dh]\b[^>]*>)(.*?)(</t[dh]>)", re.DOTALL | re.IGNORECASE)
+_TAG = re.compile(r"<[^>]+>")
+_LINE_BREAK = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+def _flatten_table_cells(html: str) -> str:
+    """Render table cells as plain text, keeping the cell tags around them.
+
+    fpdf2 wants bare text inside `<td>`: `<strong>` aborts the export, and a `<code>`
+    nested in a cell link quietly discards *every* link in the document — the deep links
+    the notes exist for. Cell links are dropped by fpdf2 either way, so cells lose their
+    formatting and the rest of the page keeps both its formatting and its links.
+    """
+    def flatten(cell: re.Match) -> str:
+        inner = _TAG.sub("", _LINE_BREAK.sub(" ", cell.group(2)))
+        return f"{cell.group(1)}{inner}{cell.group(3)}"
+
+    return _CELL.sub(flatten, html)
+
+
 def _to_html(markdown_text: str, family: str) -> str:
-    body = md.markdown(_prepare(markdown_text), extensions=["tables", "fenced_code"])
+    body = _flatten_table_cells(md.markdown(_prepare(markdown_text), extensions=["tables", "fenced_code"]))
     style = f' style="font-family:{family}"' if family != _CORE_FAMILY else ""
     return f"<body{style}>{body}</body>"
 

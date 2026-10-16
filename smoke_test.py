@@ -1,6 +1,7 @@
 """Offline smoke test for the pure logic (no API keys, no network needed)."""
 
 import os
+import time
 
 os.environ["RATE_LIMIT_GAP_SECONDS"] = "0"  # the stub LLM never hits a real quota
 os.environ["RATE_LIMIT_EMBED_GAP_SECONDS"] = "0"
@@ -38,7 +39,30 @@ def test_rate_limit():
         raise AssertionError("should have re-raised")
     except ValueError:
         pass
-    print("rate-limit handling ok (parses retryDelay, retries 429 only)")
+
+    # Captured verbatim from the API: same 429, but the whole day is gone.
+    daily = Exception(
+        "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your "
+        "current quota ... * Quota exceeded for metric: "
+        "generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, "
+        "model: gemini-3.8-flash \\nPlease retry in 53.482125167s.', 'status': "
+        "'RESOURCE_EXHAUSTED', 'details': [{'quotaId': "
+        "'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}]}}"
+    )
+    assert ratelimit.is_rate_limit(daily) and ratelimit.is_daily_quota(daily)
+    assert not ratelimit.is_daily_quota(Exception("429 RESOURCE_EXHAUSTED limit: 10"))
+
+    def exhausted():
+        raise daily
+
+    started = time.monotonic()
+    try:
+        ratelimit.with_retry(exhausted)
+        raise AssertionError("daily quota should fail fast, not retry")
+    except RuntimeError as fast:
+        assert "gemini-3.8-flash" in str(fast) and "20/day" in str(fast), fast
+    assert time.monotonic() - started < 1, "must not sit in the retry loop"
+    print("rate-limit handling ok (retryDelay, 429-only retries, daily quota fails fast)")
 
 
 def test_video_ids():

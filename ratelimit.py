@@ -17,6 +17,29 @@ def is_rate_limit(error: Exception) -> bool:
     return "RESOURCE_EXHAUSTED" in text or "429" in text
 
 
+def is_daily_quota(error: Exception) -> bool:
+    """True when the whole day's allowance is gone, so waiting cannot help.
+
+    Google reports per-minute and per-day exhaustion identically (429), but the
+    per-day one carries a `...PerDay...` quota id. Retrying that turns a one-second
+    error into a five-minute hang in the middle of a demo.
+    """
+    return "PerDay" in str(error)
+
+
+def daily_quota_message(error: Exception) -> str:
+    model = re.search(r"model: ([\w.\-]+)", str(error))
+    limit = re.search(r"limit: (\d+)", str(error))
+    which = model.group(1) if model else "the current model"
+    cap = f" ({limit.group(1)}/day)" if limit else ""
+    return (
+        f"Google's free tier has used up today's requests for {which}{cap}. "
+        "The allowance resets daily. Wait for the reset, or set "
+        "GEMINI_CHAT_MODEL=gemini-flash-lite-latest in the app secrets to use a "
+        "model with a larger free quota."
+    )
+
+
 def retry_delay(error: Exception, attempt: int) -> float:
     """Prefer the server's own retry hint, else exponential backoff capped at 60s."""
     match = re.search(r"retry(?:Delay)?['\"]?\s*[:=]?\s*['\"]?([\d.]+)s", str(error))
@@ -40,6 +63,8 @@ def with_retry(call, *, retries: int = MAX_RETRIES, gap: float = MIN_GAP_SECONDS
         try:
             return call()
         except Exception as error:
+            if is_daily_quota(error):
+                raise RuntimeError(daily_quota_message(error)) from error
             if not is_rate_limit(error) or attempt == retries - 1:
                 raise
             time.sleep(retry_delay(error, attempt))

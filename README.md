@@ -95,6 +95,8 @@ The same `**[mm:ss]**` markers survive into the PDF, where `fpdf2` renders them 
 | Map/reduce for notes instead of one giant prompt | Transcripts exceed the practical context window; batching keeps each call small and cost linear |
 | Vectors cached per video | Re-indexing is a pure FAISS rebuild — zero API spend |
 | Chat model = `gemini-flash-latest`, not a dated snapshot | Google retires pinned versions for new API keys — a `gemini-2.5-flash` deployment now 404s on every question. Override with `GEMINI_CHAT_MODEL` |
+| `thinking_budget=0` on chat calls | Retrieval-augmented answers restate context instead of reasoning over it; measured 432 of 500 output tokens were hidden reasoning, ~40s per question instead of ~2s |
+| Daily quota fails fast instead of retrying | Per-minute and per-day exhaustion both arrive as 429, but waiting out a *daily* cap is pointless — it would hang a demo for five minutes to no purpose |
 | Fixed "not in the transcript" reply | A RAG demo is only trustworthy when it refuses instead of inventing |
 
 ---
@@ -152,7 +154,8 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini Flash · FAIS
 | `No transcripts were provided` / `TranscriptsDisabled` | Video has no captions — pick another, or change the language selector |
 | `YouTube is blocking requests from your IP` | Expected on cloud hosts — use **Paste / upload transcript**, or set `TRANSCRIPT_PROXY_HTTPS_URL` |
 | `Could not get API key` | `.env` missing `GEMINI_API_KEY=...`, or secrets not set on Streamlit Cloud |
-| Rate limit (429) | Lower "How many transcript chunks to read" in the Notes tab |
+| Rate limit (429, per minute) | The app already spaces requests out and honours Google's `retryDelay` — let it finish | 
+| "used up today's requests for ... (20/day)" | The free tier allows **20 chat requests per model per day**. Wait for the reset, or add `GEMINI_CHAT_MODEL="gemini-flash-lite-latest"` to secrets for a larger allowance |
 | Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 12 |
 | `faiss-cpu` will not install | Use Python 3.11–3.13; pre-built wheels lag behind brand-new Python releases |
 | `FAISS.from_embeddings() missing ... 'text_embeddings'` | A LangChain version drifted out from under the code — `requirements.txt` is pinned to the versions this repo is tested against, so reinstall with `pip install -r requirements.txt --force-reinstall` |

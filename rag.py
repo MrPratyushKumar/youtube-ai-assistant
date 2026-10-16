@@ -20,12 +20,18 @@ If the context does not contain the answer, reply exactly:
 # API keys, which leaves a deployed app returning 404 on every question.
 DEFAULT_MODEL = os.environ.get("GEMINI_CHAT_MODEL", "gemini-flash-latest")
 
+# RAG answers restate transcript context rather than solve problems, so the
+# model's hidden reasoning is pure latency: 432 of 500 output tokens on one
+# question, ~40s instead of ~2s.
+THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
+
 
 def make_llm(api_key: str, temperature: float = 0.2) -> ChatGoogleGenerativeAI:
     return ChatGoogleGenerativeAI(
         model=DEFAULT_MODEL,
         google_api_key=api_key,
         temperature=temperature,
+        thinking_budget=THINKING_BUDGET,
     )
 
 

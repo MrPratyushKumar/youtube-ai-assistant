@@ -23,7 +23,18 @@ DEFAULT_MODEL = os.environ.get("GEMINI_CHAT_MODEL", "gemini-flash-latest")
 # RAG answers restate transcript context rather than solve problems, so the
 # model's hidden reasoning is pure latency: 432 of 500 output tokens on one
 # question, ~40s instead of ~2s.
-THINKING_BUDGET = int(os.environ.get("GEMINI_THINKING_BUDGET", "0"))
+DEFAULT_THINKING_BUDGET = "0"
+
+
+def thinking_kwargs(model: str) -> dict:
+    """`thinking_budget` only exists on thinking models — the lite ones answer 400.
+
+    Set GEMINI_THINKING_BUDGET to an empty value to leave the parameter off.
+    """
+    raw = os.environ.get("GEMINI_THINKING_BUDGET", DEFAULT_THINKING_BUDGET).strip()
+    if not raw or "lite" in model:
+        return {}
+    return {"thinking_budget": int(raw)}
 
 
 def make_llm(api_key: str, temperature: float = 0.2) -> ChatGoogleGenerativeAI:
@@ -31,7 +42,7 @@ def make_llm(api_key: str, temperature: float = 0.2) -> ChatGoogleGenerativeAI:
         model=DEFAULT_MODEL,
         google_api_key=api_key,
         temperature=temperature,
-        thinking_budget=THINKING_BUDGET,
+        **thinking_kwargs(DEFAULT_MODEL),
     )
 
 

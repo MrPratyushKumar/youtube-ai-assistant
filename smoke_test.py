@@ -206,6 +206,9 @@ def test_llm_response_shapes():
     assert rag.response_text(blocks) == "part one part two"
     assert rag.response_text(None) == ""
     assert rag.DEFAULT_MODEL and "2.5" not in rag.DEFAULT_MODEL  # retired snapshots 404
+    # Lite models answer 400 INVALID_ARGUMENT for this parameter, so it must be omitted.
+    assert rag.thinking_kwargs("gemini-flash-lite-latest") == {}
+    assert rag.thinking_kwargs("gemini-flash-latest") == {"thinking_budget": 0}
     print(f"chat response parsing ok (model={rag.DEFAULT_MODEL})")
 
 

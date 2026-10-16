@@ -223,6 +223,29 @@ def test_vector_store():
     print("vector store ok (2 chunks, cached vectors reused)")
 
 
+def test_pdf_font_fallback():
+    """A cloud container may have no TTF at all — that must degrade, not abort."""
+    import pdf_export
+
+    saved_index = pdf_export._index
+    regular = pdf_export._find_font("")
+    assert regular, "needs a real TTF on the test machine"
+    body = "**bold point** and *emphasis* and [0:12](https://youtu.be/x?t=12)"
+    try:
+        pdf_export._index = {}  # nothing installed
+        assert pdf_export._resolve_family() == pdf_export._CORE_FAMILY
+        assert pdf_export.notes_to_pdf(body, "T", "https://youtu.be/x")[:5] == b"%PDF-"
+        assert pdf_export.notes_to_pdf("café — ₹ → ✅", "T", "")[:5] == b"%PDF-"
+
+        all_names = [n for names in pdf_export._FONT_CANDIDATES.values() for n in names]
+        pdf_export._index = {name.lower(): regular for name in all_names}  # bold/italic files missing
+        assert pdf_export._resolve_family() == "Notes"
+        assert pdf_export.notes_to_pdf(body, "T", "https://youtu.be/x")[:5] == b"%PDF-"
+        print("pdf font fallback ok (no fonts -> core family, missing bold -> single TTF)")
+    finally:
+        pdf_export._index = saved_index
+
+
 test_video_ids()
 test_chunking()
 test_upload_parsing()
@@ -231,4 +254,5 @@ test_llm_response_shapes()
 test_vector_store()
 test_notes_flow()
 test_pdf_export()
+test_pdf_font_fallback()
 print("\nALL CHECKS PASSED")

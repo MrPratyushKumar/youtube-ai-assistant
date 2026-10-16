@@ -34,14 +34,36 @@ def _find_font(style: str) -> str | None:
     override = os.environ.get("PDF_FONT_PATH")
     if override and style == "":
         return override
-    for folder in _FONT_DIRS:
-        if not folder:
-            continue
-        for name in _FONT_CANDIDATES[style]:
-            path = os.path.join(folder, name)
-            if os.path.isfile(path):
-                return path
+    index = _font_index()
+    for name in _FONT_CANDIDATES[style]:
+        path = index.get(name.lower())
+        if path:
+            return path
     return None
+
+
+_index: dict[str, str] | None = None
+
+
+def _font_index() -> dict[str, str]:
+    """Map lowercased TTF filenames to paths, searching font trees recursively.
+
+    Distributions bury fonts at unpredictable depths — `/usr/share/fonts/truetype/...`,
+    `.../X11/`, `.../noto/...` — so a fixed list of directories silently finds nothing
+    and the PDF loses every non-latin character.
+    """
+    global _index
+    if _index is None:
+        roots = [folder for folder in _FONT_DIRS if folder]
+        roots += ["/usr/share/fonts", "/usr/local/share/fonts", os.path.expanduser("~/.fonts")]
+        found: dict[str, str] = {}
+        for root in roots:
+            for folder, _, files in os.walk(root):
+                for name in files:
+                    if name.lower().endswith(".ttf") and name.lower() not in found:
+                        found[name.lower()] = os.path.join(folder, name)
+        _index = found
+    return _index
 
 
 def _prepare(markdown_text: str) -> str:
@@ -51,25 +73,33 @@ def _prepare(markdown_text: str) -> str:
     return text.strip()
 
 
-def _to_html(markdown_text: str) -> str:
+def _to_html(markdown_text: str, family: str) -> str:
     body = md.markdown(_prepare(markdown_text), extensions=["tables", "fenced_code"])
-    return f'<body style="font-family:Notes">{body}</body>'
+    style = f' style="font-family:{family}"' if family != _CORE_FAMILY else ""
+    return f"<body{style}>{body}</body>"
+
+
+_CORE_FAMILY = "helvetica"
 
 
 class _NotesPDF(FPDF):
-    def __init__(self, title: str, video_url: str) -> None:
+    """Header and footer run inside add_page(), before the caller can set a font,
+    so the resolved family has to live on the instance."""
+
+    def __init__(self, title: str, video_url: str, family: str) -> None:
         super().__init__(format="A4")
         self._title = title
         self._video_url = video_url
+        self._family = family
         self.set_margins(18, 20, 18)
         self.set_auto_page_break(True, margin=22)
         self.set_text_color(*TEXT)
 
     def header(self) -> None:
-        self.set_font("Notes", "B", 14)
+        self.set_font(self._family, "B", 14)
         self.set_text_color(*TEXT)
         self.cell(0, 8, self._title[:110], new_x="LMARGIN", new_y="NEXT")
-        self.set_font("Notes", "", 9)
+        self.set_font(self._family, "", 9)
         self.set_text_color(*MUTED)
         self.cell(0, 5, "Study notes generated from the video transcript", new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(*ACCENT)
@@ -79,14 +109,14 @@ class _NotesPDF(FPDF):
 
     def footer(self) -> None:
         self.set_y(-16)
-        self.set_font("Notes", "", 8)
+        self.set_font(self._family, "", 8)
         self.set_text_color(*MUTED)
         self.cell(0, 6, f"Page {self.page_no()} of {{nb}}", align="R")
 
     def open_video_link(self) -> None:
         if not self._video_url:  # uploaded transcripts have no source video
             return
-        self.set_font("Notes", "", 9)
+        self.set_font(self._family, "", 9)
         self.set_text_color(*ACCENT)
         self.multi_cell(
             0,
@@ -100,30 +130,41 @@ class _NotesPDF(FPDF):
         self.ln(4)
 
 
+def _resolve_family() -> str:
+    """Pick the font family the whole document can use, before any page is drawn.
+
+    A half-registered family is worse than none: write_html asks for bold the moment
+    it meets `**text**`, and an undefined `NotesB` aborts the export mid-render.
+    """
+    regular = _find_font("")
+    if not regular:
+        return _CORE_FAMILY
+    probe = FPDF()
+    try:
+        for style in ("", "B", "I", "BI"):
+            probe.add_font("Notes", style, _find_font(style) or regular)
+    except Exception:
+        return _CORE_FAMILY
+    return "Notes"
+
+
 def notes_to_pdf(markdown_text: str, title: str, video_url: str) -> bytes:
     """Convert notes Markdown into PDF bytes (clickable timestamps included)."""
-    pdf = _NotesPDF(title=title, video_url=video_url)
+    family = _resolve_family()
+    pdf = _NotesPDF(title=title, video_url=video_url, family=family)
 
-    regular = _find_font("")
-    if regular:
+    if family == "Notes":
+        regular = _find_font("")
         for style in ("", "B", "I", "BI"):
-            path = _find_font(style) or regular
-            try:
-                pdf.add_font("Notes", style, path)
-            except Exception:
-                if style == "":
-                    raise
-        font_family, unicode_ok = "Notes", True
-    else:
-        # Core fonts are latin-1 only, so drop anything they cannot draw.
-        font_family, unicode_ok = "helvetica", False
+            pdf.add_font("Notes", style, _find_font(style) or regular)
 
-    pdf.set_font(font_family, "", 10.5)
+    pdf.set_font(family, "", 10.5)
     pdf.add_page()
     pdf.open_video_link()
 
-    body = _to_html(markdown_text)
-    if not unicode_ok:
+    body = _to_html(markdown_text, family)
+    if family == _CORE_FAMILY:
+        # Core fonts are latin-1 only, so drop anything they cannot draw.
         body = _EMOJI.sub("", body).encode("latin-1", "replace").decode("latin-1")
     pdf.write_html(body)
 

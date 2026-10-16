@@ -458,7 +458,8 @@ def test_app_flow():
     assert not at.error, [e.value for e in at.error]
     downloads = [button.label for button in at.download_button]
     assert any("PDF" in label for label in downloads), downloads
-    print(f"app flow ok (1-chunk upload -> notes -> {downloads})")
+    # Button labels carry emoji, which Windows' default console code page cannot print.
+    print(f"app flow ok (1-chunk upload -> notes -> {len(downloads)} PDF download button)")
 
 
 test_video_ids()

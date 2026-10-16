@@ -45,7 +45,7 @@ Transcript-based Retrieval-Augmented Generation with LangChain, Gemini embedding
 | 🧾 Full transcript browser by timestamp | ⭐ added |
 | 📤 Transcript upload (`.srt` / `.vtt` / `.txt`) for when YouTube blocks the server's IP | ⭐ added |
 | ⚡ `st.cache_data` so re-processing a video costs zero API calls | ⭐ added |
-| 🚦 Batched embeddings + throttled chat calls so free-tier quotas don't break a run | ⭐ added |
+| 🚦 Batched embeddings, throttled retries and automatic model fallback so free-tier quotas don't break a run | ⭐ added |
 
 ---
 
@@ -96,7 +96,8 @@ The same `**[mm:ss]**` markers survive into the PDF, where `fpdf2` renders them 
 | Vectors cached per video | Re-indexing is a pure FAISS rebuild — zero API spend |
 | Chat model = `gemini-flash-latest`, not a dated snapshot | Google retires pinned versions for new API keys — a `gemini-2.5-flash` deployment now 404s on every question. Override with `GEMINI_CHAT_MODEL` |
 | `thinking_budget=0` on chat calls | Retrieval-augmented answers restate context instead of reasoning over it; measured 432 of 500 output tokens were hidden reasoning, ~40s per question instead of ~2s |
-| Daily quota fails fast instead of retrying | Per-minute and per-day exhaustion both arrive as 429, but waiting out a *daily* cap is pointless — it would hang a demo for five minutes to no purpose |
+| Errors arrive as sentences, never as JSON | Google returns a 429 blob with a `RetryInfo` embedded in it. `ratelimit.py` decodes it: transient limits honour Google's own `retryDelay`, a *daily* cap fails fast (waiting it out would hang a demo for five minutes to no purpose), and a 503 "high demand" — Google saying it is overloaded, which is not quota — rejoins the retry loop. A wrong key, a disabled API or a retired model each say what to fix instead of dumping a payload |
+| Chat falls back to a sibling model | Free quota is per **model** per day, so an exhausted `gemini-flash-latest` still has a twin with budget. `rag.call_llm` retries the primary, then tries `gemini-flash-lite-latest`, and the UI names whichever model answered |
 | Cloud PDFs download Noto Sans once | Streamlit's image installs no TrueType fonts, and the core PDF fonts are latin-1 only, so `café` and `₹` would vanish silently. One cached download per container covers the rest of Unicode; a host with no egress still renders, just plainer |
 | PDF table cells are flattened to text | `fpdf2` aborts on `<strong>` inside `<td>`, and a nested `<code>` in a cell link silently discards **every** link in the document. Cells lose their bold; the bullets that carry the citations keep theirs |
 | Fixed "not in the transcript" reply | A RAG demo is only trustworthy when it refuses instead of inventing |
@@ -156,8 +157,11 @@ Python · Streamlit · LangChain · Gemini Embedding 001 · Gemini Flash · FAIS
 | `No transcripts were provided` / `TranscriptsDisabled` | Video has no captions — pick another, or change the language selector |
 | `YouTube is blocking requests from your IP` | Expected on cloud hosts — use **Paste / upload transcript**, or set `TRANSCRIPT_PROXY_HTTPS_URL` |
 | `Could not get API key` | `.env` missing `GEMINI_API_KEY=...`, or secrets not set on Streamlit Cloud |
-| Rate limit (429, per minute) | The app already spaces requests out and honours Google's `retryDelay` — let it finish | 
-| "used up today's requests for ... (20/day)" | The free tier allows **20 chat requests per model per day**. Wait for the reset, or add `GEMINI_CHAT_MODEL="gemini-flash-lite-latest"` to secrets for a larger allowance |
+| "Google's free tier is not accepting more requests for …" | The free tier allows **20 chat requests per model per day** (embeddings have their own budget). The app already tried a sibling model, so wait for the midnight-Pacific reset, watch live usage at [ai.dev/rate-limit](https://ai.dev/rate-limit), or set `GEMINI_CHAT_MODEL="gemini-flash-lite-latest"` in secrets for a larger allowance |
+| "… is temporarily overloaded on Google's side (503)" | Google's own "come back later", not quota and not a bug — the app retries it and usually recovers within a minute |
+| "Gemini has no free-tier capacity left for …" | Every model in the fallback chain is spent for today. Nothing in the app is broken; reset at midnight Pacific or attach a billed key |
+| "The Gemini API key was rejected" / "Google refused this key (403)" | A settings problem, not a code one — paste a current key into secrets and restart, or enable the Generative Language API for that project |
+| "… is not available to this key" | Google retires dated model snapshots for new keys. Set `GEMINI_CHAT_MODEL=gemini-flash-latest` in secrets |
 | Notes cover only part of a long video | Increase the chunk slider; cost grows linearly with batches of 12 |
 | `faiss-cpu` will not install | Use Python 3.11–3.13; pre-built wheels lag behind brand-new Python releases |
 | `FAISS.from_embeddings() missing ... 'text_embeddings'` | A LangChain version drifted out from under the code — `requirements.txt` is pinned to the versions this repo is tested against, so reinstall with `pip install -r requirements.txt --force-reinstall` |
